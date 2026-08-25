@@ -138,7 +138,7 @@ The design ships two hero treatments and a floating toggle to compare them.
 To ship a single hero, delete the `<HeroSwitcher />` line and render the one
 you want.
 
-## Contact form → Telegram
+## Contact form → Telegram and email
 
 The endpoint lives at `/api/lead` on **both** hosting targets. All of the logic
 sits in one platform-agnostic module and each runtime gets a thin adapter, so
@@ -203,10 +203,39 @@ Copy `.env.example` to `.env` and fill in:
 
 | Variable | Required | Notes |
 | --- | --- | --- |
-| `TELEGRAM_BOT_TOKEN` | yes | From [@BotFather](https://t.me/BotFather) |
-| `TELEGRAM_CHAT_ID` | yes | Message the bot, then read `https://api.telegram.org/bot<TOKEN>/getUpdates` |
+| `TELEGRAM_BOT_TOKEN` | channel | From [@BotFather](https://t.me/BotFather) |
+| `TELEGRAM_CHAT_ID` | channel | Message the bot, then read `https://api.telegram.org/bot<TOKEN>/getUpdates` |
+| `RESEND_API_KEY` | channel | From [resend.com](https://resend.com) |
+| `LEAD_EMAIL_TO` | channel | Recipient; several allowed, comma-separated |
+| `LEAD_EMAIL_FROM` | no | Needs a domain verified in Resend; defaults to `onboarding@resend.dev` |
+| `VITE_SITE_URL` | no | Production origin **with** the scheme; drives the sitemap |
 | `VITE_RECAPTCHA_SITE_KEY` | no | Public — inlined into the bundle |
 | `RECAPTCHA_SECRET` | no | Server-side only |
+
+**Delivery channels.** Telegram and email are independent and both optional,
+but **at least one pair must be set** or the endpoint answers `500 No delivery
+channel is configured`. Each channel activates only when its own variables are
+present, so you can run either alone or both.
+
+They are sent in parallel, and a lead counts as delivered if **any** channel
+accepts it — the customer sees success as long as the enquiry landed somewhere,
+and the failing channel is logged with its error. Only when every channel fails
+does the endpoint return `502`. Verified against a stubbed transport:
+
+```
+both succeed               -> 200  lead kept
+telegram ok, email fails   -> 200  lead kept
+telegram fails, email ok   -> 200  lead kept
+both fail                  -> 502  reported as failed
+```
+
+**Why Resend and not SMTP.** The Cloudflare Workers runtime has no raw TCP, so
+nodemailer and every other SMTP client is impossible there. Resend is an HTTPS
+API, so the same code runs on both hosts. Switching provider means rewriting
+`sendEmail()` in `shared/lead.js` — nothing else knows about it.
+
+The email sets `reply_to` to the customer's address, so replying from the inbox
+answers them directly.
 
 Add the same names in your host's dashboard — Vercel under **Project Settings →
 Environment Variables**, Cloudflare Pages under **Settings → Environment

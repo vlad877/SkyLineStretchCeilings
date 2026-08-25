@@ -10,11 +10,17 @@
 // the same code runs on Node and on the Workers runtime.
 //
 // Env keys (server-side only, never in the client bundle):
-//   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID   — required
+//   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID   — Telegram channel; skipped when unset
+//   RESEND_API_KEY, LEAD_EMAIL_TO          — email channel; skipped when unset
+//   LEAD_EMAIL_FROM                        — optional sender override
 //   RECAPTCHA_SECRET                       — optional; skipped when unset
+//
+// At least one delivery channel must be configured. A lead counts as delivered
+// if any configured channel accepts it.
 
 const RECAPTCHA_TIMEOUT_MS = 4000
 const TELEGRAM_TIMEOUT_MS = 8000
+const EMAIL_TIMEOUT_MS = 8000
 // Mobile devices routinely score 0.3–0.5, so anything higher rejects real leads.
 const MIN_SCORE = 0.3
 
@@ -147,58 +153,148 @@ export async function handleLead({ body = {}, env = {} }) {
     }
   }
 
-  if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) {
+  // One list of facts, rendered per channel below.
+  const rows = [
+    ['Name', name],
+    ['Phone', phone],
+    ['Email', email],
+    ['Postal code', postal.toUpperCase()],
+    ...(message ? [['Message', message]] : []),
+    ...UTM_KEYS.map((key) => [
+      key.replace(/^utm_(.)/, (_, c) => `UTM ${c.toUpperCase()}`),
+      field(body[key], LIMITS.utm),
+    ]).filter(([, value]) => value),
+  ]
+
+  const lead = { rows, name, phone, email, postal }
+
+  // Both channels are optional and independent. They run in parallel so one
+  // slow provider does not add its latency to the other.
+  const deliveries = []
+  if (env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID) {
+    deliveries.push(['telegram', sendTelegram(env, lead)])
+  }
+  if (env.RESEND_API_KEY && env.LEAD_EMAIL_TO) {
+    deliveries.push(['email', sendEmail(env, lead)])
+  }
+
+  if (!deliveries.length) {
     return {
       status: 500,
-      body: { success: false, error: 'Telegram is not configured' },
+      body: { success: false, error: 'No delivery channel is configured' },
     }
   }
 
-  const utmLines = UTM_KEYS.map((key) => {
-    const value = field(body[key], LIMITS.utm)
-    if (!value) return ''
-    const label = key.replace('utm_', 'UTM ')
-    return `<b>${label[0].toUpperCase()}${label.slice(1)}:</b> ${escapeHtml(value)}`
+  const settled = await Promise.allSettled(deliveries.map(([, task]) => task))
+  const failures = []
+  let delivered = 0
+
+  settled.forEach((outcome, i) => {
+    const channel = deliveries[i][0]
+    if (outcome.status === 'fulfilled' && outcome.value.ok) {
+      delivered++
+      return
+    }
+    const reason =
+      outcome.status === 'rejected'
+        ? String(outcome.reason)
+        : JSON.stringify(outcome.value.error)
+    failures.push({ channel, error: reason })
+    console.warn(`[lead] ${channel} delivery failed:`, reason)
   })
-    .filter(Boolean)
-    .join('\n')
 
-  const lines = [
-    '<b>📩 New Lead — SkyLine Stretch Ceilings</b>',
-    '',
-    `<b>Name:</b> ${escapeHtml(name)}`,
-    `<b>Phone:</b> ${phoneLinks(phone)}`,
-    `<b>Email:</b> <a href="mailto:${escapeAttr(email)}">${escapeHtml(email)}</a>`,
-    `<b>Postal code:</b> ${escapeHtml(postal.toUpperCase())}`,
-    message ? `<b>Message:</b> ${escapeHtml(message)}` : '',
-  ].filter(Boolean)
-
-  const text = lines.join('\n') + (utmLines ? `\n\n${utmLines}` : '')
-
-  try {
-    const response = await postWithTimeout(
-      `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: env.TELEGRAM_CHAT_ID,
-          text,
-          parse_mode: 'HTML',
-          disable_web_page_preview: true,
-        }),
-      },
-      TELEGRAM_TIMEOUT_MS
-    )
-
-    const data = await response.json()
-    if (!response.ok) {
-      return { status: response.status, body: { success: false, error: data } }
-    }
+  // The lead is safe as long as it reached somewhere. Reporting failure to a
+  // customer whose enquiry did arrive would only make them submit again.
+  if (delivered > 0) {
     return { status: 200, body: { success: true } }
-  } catch (error) {
-    return { status: 500, body: { success: false, error: String(error) } }
   }
+  return { status: 502, body: { success: false, errors: failures } }
+}
+
+async function sendTelegram(env, { rows }) {
+  const text =
+    '<b>📩 New Lead — SkyLine Stretch Ceilings</b>\n\n' +
+    rows
+      .map(([label, value]) => {
+        if (label === 'Phone') return `<b>Phone:</b> ${phoneLinks(value)}`
+        if (label === 'Email') {
+          return `<b>Email:</b> <a href="mailto:${escapeAttr(value)}">${escapeHtml(value)}</a>`
+        }
+        return `<b>${label}:</b> ${escapeHtml(value)}`
+      })
+      .join('\n')
+
+  const response = await postWithTimeout(
+    `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: env.TELEGRAM_CHAT_ID,
+        text,
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+      }),
+    },
+    TELEGRAM_TIMEOUT_MS
+  )
+
+  const data = await response.json().catch(() => ({}))
+  return response.ok ? { ok: true } : { ok: false, error: data }
+}
+
+/**
+ * Resend is used because it is an HTTPS API: the Cloudflare Workers runtime
+ * has no raw TCP, so SMTP libraries cannot run there. Swapping provider means
+ * rewriting this one function — nothing else knows about it.
+ */
+async function sendEmail(env, { rows, name, email, postal }) {
+  const textBody = rows.map(([label, value]) => `${label}: ${value}`).join('\n')
+
+  const htmlRows = rows
+    .map(([label, value]) => {
+      let shown = escapeHtml(value)
+      if (label === 'Phone') shown = `<a href="tel:${escapeAttr(value)}">${shown}</a>`
+      if (label === 'Email') shown = `<a href="mailto:${escapeAttr(value)}">${shown}</a>`
+      return (
+        '<tr>' +
+        `<td style="padding:6px 14px 6px 0;color:#6b6f76;white-space:nowrap;vertical-align:top">${escapeHtml(label)}</td>` +
+        `<td style="padding:6px 0;color:#16181c">${shown}</td>` +
+        '</tr>'
+      )
+    })
+    .join('')
+
+  const html =
+    '<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;font-size:15px;line-height:1.6">' +
+    '<h2 style="margin:0 0 4px;font-size:18px;color:#16181c">New lead — SkyLine Stretch Ceilings</h2>' +
+    '<p style="margin:0 0 18px;color:#6b6f76;font-size:13px">Sent from the website contact form.</p>' +
+    `<table style="border-collapse:collapse">${htmlRows}</table>` +
+    '</div>'
+
+  const response = await postWithTimeout(
+    'https://api.resend.com/emails',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: env.LEAD_EMAIL_FROM || 'SkyLine Leads <onboarding@resend.dev>',
+        to: env.LEAD_EMAIL_TO.split(',').map((address) => address.trim()).filter(Boolean),
+        // Hitting Reply in the inbox answers the customer directly.
+        reply_to: email,
+        subject: `New lead — ${name} (${postal.toUpperCase()})`,
+        text: textBody,
+        html,
+      }),
+    },
+    EMAIL_TIMEOUT_MS
+  )
+
+  const data = await response.json().catch(() => ({}))
+  return response.ok ? { ok: true } : { ok: false, error: data }
 }
 
 export const METHOD_NOT_ALLOWED = {
