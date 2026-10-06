@@ -4,9 +4,24 @@ export default function WhyUs() {
   return (
     <section id="why" className="section section--dark">
       <div className="container" data-reveal>
-        <div className="section-head--center">
-          <div className="eyebrow eyebrow--light">The SkyLine difference</div>
-          <h2 className="h2">Why clients across Vancouver choose us</h2>
+        <div className="why-head">
+          <div>
+            <div className="eyebrow eyebrow--light">The SkyLine difference</div>
+            <h2 className="h2">Why clients across Vancouver choose us</h2>
+            <p className="why-head__lead">
+              Meet the crew behind every SkyLine ceiling — from the first
+              measurement to the final LED line.
+            </p>
+          </div>
+
+          <figure className="team-card">
+            <img
+              src="/assets/team.jpg"
+              alt="The SkyLine Ceilings installation team"
+              className="team-card__img"
+              loading="lazy"
+            />
+          </figure>
         </div>
 
         <div className="reason-grid">

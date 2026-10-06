@@ -186,29 +186,33 @@ export async function handleLead({ body = {}, env = {} }) {
   }
 
   const settled = await Promise.allSettled(deliveries.map(([, task]) => task))
-  const failures = []
-  let delivered = 0
+  const delivered = []
+  const failed = []
 
   settled.forEach((outcome, i) => {
     const channel = deliveries[i][0]
     if (outcome.status === 'fulfilled' && outcome.value.ok) {
-      delivered++
+      delivered.push(channel)
       return
     }
     const reason =
       outcome.status === 'rejected'
         ? String(outcome.reason)
         : JSON.stringify(outcome.value.error)
-    failures.push({ channel, error: reason })
+    failed.push(channel)
+    // Full provider error goes to the log only — the response is public.
     console.warn(`[lead] ${channel} delivery failed:`, reason)
   })
 
-  // The lead is safe as long as it reached somewhere. Reporting failure to a
+  // Channel names travel back with the response so a half-working setup is
+  // visible in the browser's network tab, not just in the platform logs.
+  // A silently dead email channel is otherwise invisible while Telegram works.
+  // The lead is safe as long as it reached somewhere: reporting failure to a
   // customer whose enquiry did arrive would only make them submit again.
-  if (delivered > 0) {
-    return { status: 200, body: { success: true } }
+  if (delivered.length) {
+    return { status: 200, body: { success: true, delivered, failed } }
   }
-  return { status: 502, body: { success: false, errors: failures } }
+  return { status: 502, body: { success: false, delivered, failed } }
 }
 
 async function sendTelegram(env, { rows }) {

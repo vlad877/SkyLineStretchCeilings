@@ -937,6 +937,35 @@ img {
 /* ============================================================
    Why choose us
    ============================================================ */
+.why-head {
+  display: grid;
+  grid-template-columns: 5fr 7fr;
+  gap: clamp(32px, 5vw, 72px);
+  align-items: end;
+  margin-bottom: 56px;
+}
+.why-head__lead {
+  font-size: 16px;
+  line-height: 1.7;
+  color: #b3b4ba;
+  font-weight: 300;
+  margin: 22px 0 0;
+  max-width: 420px;
+}
+
+.team-card {
+  margin: 0;
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 3px solid var(--accent);
+}
+.team-card__img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
 .reason-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
@@ -1790,6 +1819,11 @@ img {
   }
   .split-rev .media-frame {
     order: -1;
+  }
+
+  .why-head {
+    grid-template-columns: 1fr;
+    margin-bottom: 40px;
   }
 
   .hero-a {
