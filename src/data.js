@@ -317,7 +317,7 @@ export const faqs = [
   },
 ]
 
-// The map outlines the polygon in src/geo/vancouver-boundary.json and frames
+// The map outlines the polygons in src/geo/service-area.json and frames
 // itself to it, so there is no zoom level to keep in sync here.
 // `center` only positions the marker.
 export const serviceArea = {
@@ -333,6 +333,9 @@ export const cities = [
   'New Westminster',
   'Coquitlam',
   'Port Coquitlam',
+  'Port Moody',
+  'Anmore',
+  'Belcarra',
   'Richmond',
   'Delta',
   'Surrey',

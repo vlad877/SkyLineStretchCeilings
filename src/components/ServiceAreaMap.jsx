@@ -5,12 +5,13 @@ import 'leaflet/dist/leaflet.css'
 import serviceAreaGeo from '../geo/service-area.json'
 import { serviceArea } from '../data.js'
 
-// CARTO's dark basemap over OpenStreetMap data. No account, no API key —
-// attribution (rendered bottom-right by Leaflet) is the only requirement.
-const TILE_URL = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-const ATTRIBUTION =
-  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, ' +
-  '&copy; <a href="https://carto.com/attributions">CARTO</a>'
+// Esri's dark gray canvas (base + labels). Served without an API key;
+// attribution (rendered bottom-right by Leaflet) is required.
+// Note: CARTO's keyless basemaps now return "API KEY REQUIRED" watermark tiles.
+const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas'
+const TILE_URL = `${ESRI}/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`
+const LABELS_URL = `${ESRI}/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`
+const ATTRIBUTION = 'Tiles &copy; Esri &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors'
 
 const OUTLINE = {
   color: '#ef7d22',
@@ -40,9 +41,15 @@ export default function ServiceAreaMap() {
 
     L.tileLayer(TILE_URL, {
       attribution: ATTRIBUTION,
-      subdomains: 'abcd',
-      maxZoom: 19,
+      maxZoom: 16,
     }).addTo(map)
+
+    // Labels sit in their own pane above the city outlines (overlayPane is
+    // z-index 400) and ignore the pointer so outline hover/tooltips still work.
+    const labelsPane = map.createPane('labels')
+    labelsPane.style.zIndex = 450
+    labelsPane.style.pointerEvents = 'none'
+    L.tileLayer(LABELS_URL, { maxZoom: 16, pane: 'labels' }).addTo(map)
 
     const shapes = L.geoJSON(serviceAreaGeo, {
       style: () => OUTLINE,
