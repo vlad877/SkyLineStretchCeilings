@@ -1,0 +1,28 @@
+// Cloudflare Workers (static assets) deploy config.
+//
+// The build emits dist/_worker.js (Pages-style adapter, see vite.config.js).
+// Here it runs as the Worker's code instead of being uploaded as a public file:
+// `main` points at it and public/.assetsignore keeps it out of the assets.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "skylinestretchceilings",
+  "main": "dist/_worker.js",
+  "compatibility_date": "2026-08-14",
+
+  "assets": {
+    "directory": "./dist",
+    // The adapter falls back to env.ASSETS for anything that is not /api/lead.
+    "binding": "ASSETS",
+    // Deep links (/privacy etc.) get index.html, as Pages did by default.
+    "not_found_handling": "single-page-application",
+    // Replaces public/_routes.json (Pages-only): only the API hits the Worker.
+    "run_worker_first": ["/api/*"]
+  },
+
+  // Runtime variables/secrets live in the dashboard — don't wipe them on deploy.
+  "keep_vars": true,
+
+  // Match the current dashboard settings (only the custom domain is used).
+  "workers_dev": false,
+  "preview_urls": false
+}
